@@ -17,6 +17,7 @@ from src.settings import LOGS_ROOT, UTCNOW
 from src.ts import load_ABIDE1, TSQuantileTransformer
 
 import wandb
+import pdb
 
 
 class ResidualBlock(nn.Module):
@@ -122,16 +123,22 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
+        self.hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
+        self.num_layers = self._trial.suggest_int("mlp.num_layers", 1, 4)
+        self.dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
         self.model = MLP(
             input_size=53,  # PRIOR
-            hidden_size=self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True),
-            num_layers=self._trial.suggest_int("mlp.num_layers", 1, 4),
-            dropout=self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9),
+            hidden_size=self.hidden_size,
+            num_layers=self.num_layers,
+            dropout=self.dropout,
         )
+
         self.criterion = nn.BCEWithLogitsLoss()
+
+        self.lr = (self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True),)
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True),
+            lr=self.lr,
         )
         # setup callbacks
         self.callbacks = {
@@ -157,15 +164,12 @@ class Experiment(IExperiment):
         self.model.train(self.is_train_dataset)
 
         with torch.set_grad_enabled(self.is_train_dataset):
-            for self.dataset_batch_step, (data, target) in enumerate(
-                tqdm(self.dataset)
-            ):
+            for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
                 score = self.model(data)
                 loss = self.criterion(score, target)
                 score = torch.sigmoid(score)
                 pred = (score > 0.5).to(torch.int32)
-
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
                 total_loss += loss.sum().item()
@@ -180,9 +184,7 @@ class Experiment(IExperiment):
         y_test = np.hstack(all_targets)
         y_score = np.hstack(all_scores)
         y_pred = (y_score > 0.5).astype(np.int32)
-        report = get_classification_report(
-            y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
-        )
+        report = get_classification_report(y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5)
         for stats_type in [0, 1, "macro", "weighted"]:
             stats = report.loc[stats_type]
             for key, value in stats.items():
@@ -203,7 +205,7 @@ class Experiment(IExperiment):
         self._trial = trial
         self.run()
 
-        # log score
+        # log experiment score and params
         self.wandbLogger.log({"auc": self._score})
         self.wandbLogger.log({"epochs": self.num_epochs})
         self.wandbLogger.log({"batch size": self.batch_size})
@@ -211,25 +213,6 @@ class Experiment(IExperiment):
         self.wandbLogger.log({"MPL num layers": self.num_layers})
         self.wandbLogger.log({"MPL dropput": self.dropout})
         self.wandbLogger.log({"Adam lr": self.lr})
-
-        # self.num_epochs = self._trial.suggest_int("exp.num_epochs", 1, self.max_epochs)
-        # # setup data
-        # self.batch_size = self._trial.suggest_int("data.batch_size", 32, 64, log=True)
-        # self.datasets = {
-        #     "train": DataLoader(
-        #         self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
-        #     ),
-        #     "valid": DataLoader(
-        #         self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
-        #     ),
-        # }
-        # # setup model
-        # self.model = MLP(
-        #     input_size=53,  # PRIOR
-        #     hidden_size=self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True),
-        #     num_layers=self._trial.suggest_int("mlp.num_layers", 1, 4),
-        #     dropout=self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9),
-        # )
 
         return self._score
 
