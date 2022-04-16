@@ -81,7 +81,7 @@ class Experiment(IExperiment):
         self.logdir = logdir
 
         # init wandb logger
-        self.wandbLogger: wandb.run = wandb.init(project="tune_ts", name="mlp")
+        self.wandbLogger: wandb.run = wandb.init(project="mpl runs", name="mpl")
 
     def on_tune_start(self):
         features, labels = load_ABIDE1()
@@ -135,7 +135,7 @@ class Experiment(IExperiment):
 
         self.criterion = nn.BCEWithLogitsLoss()
 
-        self.lr = (self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True),)
+        self.lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=self.lr,
