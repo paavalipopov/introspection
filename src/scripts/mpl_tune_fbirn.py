@@ -81,7 +81,7 @@ class Experiment(IExperiment):
         self.logdir = logdir
 
         # init wandb logger
-        self.wandbLogger: wandb.run = wandb.init(project="mpl runs", name="mpl")
+        self.wandbLogger: wandb.run = wandb.init(project="mpl runs", name="fbirn")
 
     def on_tune_start(self):
         features, labels = load_FBIRN()
