@@ -206,13 +206,17 @@ class Experiment(IExperiment):
         self.run()
 
         # log experiment score and params
-        self.wandbLogger.log({"auc": self._score})
-        self.wandbLogger.log({"epochs": self.num_epochs})
-        self.wandbLogger.log({"batch size": self.batch_size})
-        self.wandbLogger.log({"MPL hidden size": self.hidden_size})
-        self.wandbLogger.log({"MPL num layers": self.num_layers})
-        self.wandbLogger.log({"MPL dropput": self.dropout})
-        self.wandbLogger.log({"Adam lr": self.lr})
+        self.wandbLogger.log(
+            {
+                "auc": self._score,
+                "epochs": self.num_epochs,
+                "batch size": self.batch_size,
+                "MPL hidden size": self.hidden_size,
+                "MPL num layers": self.num_layers,
+                "MPL dropput": self.dropout,
+                "Adam lr": self.lr,
+            }
+        )
 
         return self._score
 

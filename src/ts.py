@@ -64,6 +64,32 @@ def load_ABIDE1(
     return finalData, labels
 
 
+def load_FBIRN(
+    dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5"),
+    indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv"),
+    labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv"),
+):
+    hf = h5py.File(dataset_path, "r")
+    data = hf.get("FBIRN_dataset")
+    data = np.array(data)
+    num_subjects = data.shape[0]
+    num_components = 100
+    data = data.reshape(num_subjects, num_components, -1)
+
+    # take only those brain networks that are not noise
+    df = pd.read_csv(indices_path, header=None)
+    c_indices = df.values
+    c_indices = c_indices.astype("int")
+    c_indices = c_indices.flatten()
+    c_indices = c_indices - 1
+    finalData = data[:, c_indices, :]
+
+    df = pd.read_csv(labels_path, header=None)
+    labels = df.values.flatten() - 1
+
+    return finalData, labels
+
+
 def _find_indices_of_each_class(all_labels):
     HC_index = (all_labels == 0).nonzero()
     SZ_index = (all_labels == 1).nonzero()

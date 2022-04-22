@@ -5,7 +5,13 @@ __pycache__/
 *$py.class
 
 #data
-/assets/data/UCF*
+/assets/data/
+!assets/data/abide/*.csv
+!assets/data/abide/*.h5
+!assets/data/cobre/*.csv
+!assets/data/cobre/*.h5
+!assets/data/fbirn/*.csv
+!assets/data/fbirn/*.h5
 
 # C extensions
 *.so
@@ -113,8 +119,6 @@ ENV/
 
 *.bak
 *.csv
-!src/data/abide/*.csv
-!src/data/cobre/*.csv
 *.tsv
 *.ipynb
 
