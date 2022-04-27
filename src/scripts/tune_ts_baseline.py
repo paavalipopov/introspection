@@ -1,3 +1,4 @@
+# pylint: disable-all
 import argparse
 
 from animus import IExperiment
@@ -15,6 +16,7 @@ from src.ts import load_ABIDE1, TSQuantileTransformer
 import wandb
 import time
 from collections import defaultdict
+import pdb
 
 
 class Experiment(IExperiment):
@@ -22,22 +24,6 @@ class Experiment(IExperiment):
         super().__init__()
         self._quantile: bool = quantile
         self._trial: optuna.Trial = None
-
-        # init wandb logger
-        self.wandbLogger: wandb.run = wandb.init(project="tune_ts", name="baseline")
-        # for timer
-        self.start: float = 0.0
-        # set classifiers
-        self.classifiers = [
-            "LogisticRegression",
-            "SGDClassifier",
-            "AdaBoostClassifier",
-            "RandomForestClassifier",
-        ]
-        # initialize tables for different classifiers
-        self.wandb_tables: dict = {}
-        for classifier in self.classifiers:
-            self.wandb_tables[classifier] = wandb.Table(columns=["score", "time"])
 
     def on_tune_start(self):
         features, labels = load_ABIDE1()
@@ -60,10 +46,18 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         super().on_experiment_start(exp)
+
+        # init logger
+        self.wandb_logger: wandb.run = wandb.init(project="tune_ts")
         # setup model
         clf_type = self._trial.suggest_categorical(
             "classifier",
-            choices=self.classifiers,
+            choices=[
+                "LogisticRegression",
+                "SGDClassifier",
+                "AdaBoostClassifier",
+                "RandomForestClassifier",
+            ],
         )
 
         if clf_type == "LogisticRegression":
@@ -78,6 +72,18 @@ class Experiment(IExperiment):
             else:
                 penalty = "l2"
 
+            # configure logger
+            self.wandb_logger.name = clf_type
+            self.wandb_logger.config.update(
+                {
+                    "classifier": clf_type,
+                    "solver": solver,
+                    "decay": decay,
+                    "penalty": penalty,
+                    "max_iter": 1000,
+                }
+            )
+
             self.classifier = LogisticRegression(
                 solver=solver, C=decay, penalty=penalty, max_iter=1000
             )
@@ -86,6 +92,20 @@ class Experiment(IExperiment):
                 "classifier.sgd.penalty", ["l1", "l2", "elasticnet"]
             )
             alpha = self._trial.suggest_loguniform("classifier.sgd.alpha", low=1e-4, high=1e-2)
+
+            # configure logger
+            self.wandb_logger.name = clf_type
+            self.wandb_logger.config.update(
+                {
+                    "classifier": clf_type,
+                    "loss": "modified_huber",
+                    "penalty": penalty,
+                    "alpha": alpha,
+                    "max_iter": 1000,
+                    "tol": 1e-3,
+                }
+            )
+
             self.classifier = SGDClassifier(
                 loss="modified_huber",
                 penalty=penalty,
@@ -98,6 +118,16 @@ class Experiment(IExperiment):
             n_estimators = self._trial.suggest_int(
                 "classifier.adaboost.n_estimators", 2, 32, log=True
             )
+
+            # configure logger
+            self.wandb_logger.name = clf_type
+            self.wandb_logger.config.update(
+                {
+                    "classifier": clf_type,
+                    "n_estimators": n_estimators,
+                }
+            )
+
             self.classifier = AdaBoostClassifier(n_estimators=n_estimators)
         elif clf_type == "RandomForestClassifier":
             max_depth = self._trial.suggest_int(
@@ -106,6 +136,18 @@ class Experiment(IExperiment):
             n_estimators = self._trial.suggest_int(
                 "classifier.random_forest.n_estimators", 2, 32, log=True
             )
+
+            # configure logger
+            self.wandb_logger.name = clf_type
+            self.wandb_logger.config.update(
+                {
+                    "classifier": clf_type,
+                    "max_depth": max_depth,
+                    "n_estimators": n_estimators,
+                    "max_features": 1,
+                }
+            )
+
             self.classifier = RandomForestClassifier(
                 max_depth=max_depth, n_estimators=n_estimators, max_features=1
             )
@@ -122,11 +164,13 @@ class Experiment(IExperiment):
                 if "support" not in key:
                     self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
         self.dataset_metrics = {"score": report["auc"].loc["weighted"]}
+        self.wandb_logger.log({"score": self.dataset_metrics["score"]})
 
     def on_experiment_end(self, exp: "IExperiment") -> None:
         super().on_experiment_end(exp)
         # we have only 1 epoch for baselines, so...
         self._score = self.experiment_metrics[1]["ABIDE1"]["score"]
+        self.wandb_logger.finish()
 
     def _objective(self, trial) -> float:
         # start timer
@@ -135,36 +179,12 @@ class Experiment(IExperiment):
         self._trial = trial
         self.run()
 
-        # log overall score
-        self.wandbLogger.log({"overall score": self._score})
-
-        self.wandb_tables[type(self.classifier).__name__].add_data(
-            self._score, time.process_time() - self.start
-        )
-
         return self._score
 
     def tune(self, n_trials: int):
         self.on_tune_start()
         self.study = optuna.create_study(direction="maximize")
         self.study.optimize(self._objective, n_trials=n_trials, n_jobs=1)
-
-        # log score and experiment time
-        for classifier in self.classifiers:
-            tableLength = len(self.wandb_tables[classifier].get_column("score"))
-            self.wandb_tables[classifier].add_column(name="step", data=list(range(tableLength)))
-
-            line_series = wandb.plot.line_series(
-                xs=self.wandb_tables[classifier].get_column("step"),
-                ys=[
-                    self.wandb_tables[classifier].get_column("score"),
-                    self.wandb_tables[classifier].get_column("time"),
-                ],
-                keys=["score", "time"],
-                title=classifier,
-                xname="step",
-            )
-            wandb.log({classifier: line_series})
 
         logfile = f"{LOGS_ROOT}/{UTCNOW}-ts-baseline-q{self._quantile}.optuna.csv"
         df = self.study.trials_dataframe()

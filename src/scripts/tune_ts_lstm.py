@@ -1,3 +1,4 @@
+# pylint: disable-all
 import argparse
 
 from animus import EarlyStoppingCallback, IExperiment
@@ -17,6 +18,7 @@ from src.settings import LOGS_ROOT, UTCNOW
 from src.ts import load_ABIDE1, TSQuantileTransformer
 
 import wandb
+import pdb
 
 
 class LSTM(nn.Module):
@@ -60,9 +62,6 @@ class Experiment(IExperiment):
         self.max_epochs = max_epochs
         self.logdir = logdir
 
-        # init wandb logger
-        self.wandbLogger: wandb.run = wandb.init(project="tune_ts", name="lstm")
-
     def on_tune_start(self):
         features, labels = load_ABIDE1()
         X_train, X_test, y_train, y_test = train_test_split(
@@ -89,6 +88,9 @@ class Experiment(IExperiment):
         )
 
     def on_experiment_start(self, exp: "IExperiment"):
+        # init wandb logger
+        self.wandb_logger: wandb.run = wandb.init(project="tune_lstm", name="lstm")
+
         super().on_experiment_start(exp)
         # setup experiment
         self.num_epochs = self._trial.suggest_int("exp.num_epochs", 1, self.max_epochs)
@@ -103,18 +105,23 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
+        hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
+        num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
+        bidirectional = self._trial.suggest_categorical("lstm.bidirectional", [True, False])
+        fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.9)
         self.model = LSTM(
             input_size=53,  # PRIOR
-            hidden_size=self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True),
-            num_layers=self._trial.suggest_int("lstm.num_layers", 1, 4),
+            hidden_size=hidden_size,
+            num_layers=num_layers,
             batch_first=True,
-            bidirectional=self._trial.suggest_categorical("lstm.bidirectional", [True, False]),
-            fc_dropout=self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.9),
+            bidirectional=bidirectional,
+            fc_dropout=fc_dropout,
         )
+        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
         self.criterion = nn.BCEWithLogitsLoss()
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True),
+            lr=lr,
         )
         # setup callbacks
         self.callbacks = {
@@ -133,6 +140,17 @@ class Experiment(IExperiment):
                 minimize=False,
             ),
         }
+        self.wandb_logger.config.update(
+            {
+                "num_epochs": self.num_epochs,
+                "batch_size": self.batch_size,
+                "hidden_size": hidden_size,
+                "num_layers": num_layers,
+                "bidirectional": bidirectional,
+                "fc_dropout": fc_dropout,
+                "lr": lr,
+            }
+        )
 
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
@@ -173,17 +191,36 @@ class Experiment(IExperiment):
             "accuracy": total_accuracy,
             "loss": total_loss,
         }
+        if self.is_train_dataset:
+            self.wandb_logger.log(
+                {
+                    "train_score": self.dataset_metrics["score"],
+                    "train_accuracy": self.dataset_metrics["accuracy"],
+                    "train_loss": self.dataset_metrics["loss"],
+                }
+            )
+        else:
+            self.wandb_logger.log(
+                {
+                    "valid_score": self.dataset_metrics["score"],
+                    "valid_accuracy": self.dataset_metrics["accuracy"],
+                    "valid_loss": self.dataset_metrics["loss"],
+                }
+            )
 
     def on_experiment_end(self, exp: "IExperiment") -> None:
         super().on_experiment_end(exp)
         self._score = self.callbacks["early-stop"].best_score
+        self.wandb_logger.log(
+            {
+                "best_score": self._score,
+            }
+        )
+        self.wandb_logger.finish()
 
     def _objective(self, trial) -> float:
         self._trial = trial
         self.run()
-
-        # log score
-        self.wandbLogger.log({"score": self._score})
 
         return self._score
 

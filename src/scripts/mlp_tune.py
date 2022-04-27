@@ -1,4 +1,3 @@
-# pylint: disable-all
 import argparse
 
 from animus import EarlyStoppingCallback, IExperiment
@@ -18,35 +17,57 @@ from src.settings import LOGS_ROOT, UTCNOW
 from src.ts import load_ABIDE1, TSQuantileTransformer
 
 import wandb
+import pdb
 
 
-class Transformer(nn.Module):
+class ResidualBlock(nn.Module):
+    def __init__(self, block):
+        super().__init__()
+        self.block = block
+
+    def forward(self, x: torch.Tensor):
+        return self.block(x) + x
+
+
+class MLP(nn.Module):
     def __init__(
         self,
         input_size: int,
-        fc_dropout: float = 0.5,
+        dropout: float = 0.5,
         hidden_size: int = 128,
         num_layers: int = 1,
-        num_heads: int = 8,
     ):
-        super(Transformer, self).__init__()
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_size, nhead=num_heads, batch_first=True
-        )
-        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        super(MLP, self).__init__()
         layers = [
+            nn.LayerNorm(input_size),
+            nn.Dropout(p=dropout),
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
-            transformer_encoder,
         ]
-        self.transformer = nn.Sequential(*layers)
-        self.fc = nn.Sequential(nn.Dropout(p=fc_dropout), nn.Linear(hidden_size, 1))
+        for i in range(num_layers):
+            if i == num_layers - 1:
+                layer = nn.Sequential(
+                    nn.LayerNorm(hidden_size),
+                    nn.Dropout(p=dropout),
+                    nn.Linear(hidden_size, 1),
+                )
+            else:
+                layer = ResidualBlock(
+                    nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(hidden_size, hidden_size),
+                        nn.ReLU(),
+                    )
+                )
+            layers.append(layer)
+
+        self.fc = nn.Sequential(*layers)
 
     def forward(self, x):
-        fc_output = self.transformer(x)
-        fc_output = fc_output[:, -1, :]
-        fc_output = self.fc(fc_output)
-        fc_output = torch.squeeze(fc_output, 1)
+        bs, ln, fs = x.shape
+        fc_output = self.fc(x.view(-1, fs))
+        fc_output = fc_output.view(bs, ln, -1).mean(1).squeeze(1)
         return fc_output
 
 
@@ -58,6 +79,9 @@ class Experiment(IExperiment):
         self._trial: optuna.Trial = None
         self.max_epochs = max_epochs
         self.logdir = logdir
+
+        # init wandb logger
+        self.wandbLogger: wandb.run = wandb.init(project="mpl runs", name="abide")
 
     def on_tune_start(self):
         features, labels = load_ABIDE1()
@@ -85,9 +109,6 @@ class Experiment(IExperiment):
         )
 
     def on_experiment_start(self, exp: "IExperiment"):
-        # init wandb logger
-        self.wandb_logger: wandb.run = wandb.init(project="tune_transformer", name="transformer")
-
         super().on_experiment_start(exp)
         # setup experiment
         self.num_epochs = self._trial.suggest_int("exp.num_epochs", 1, self.max_epochs)
@@ -102,23 +123,22 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = self._trial.suggest_int("transformer.hidden_size", 4, 128, log=True)
-        num_heads = self._trial.suggest_int("transformer.num_heads", 1, 4)
-        num_layers = self._trial.suggest_int("transformer.num_layers", 1, 4)
-        fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.1, 0.9)
-        self.model = Transformer(
+        self.hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
+        self.num_layers = self._trial.suggest_int("mlp.num_layers", 1, 4)
+        self.dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+        self.model = MLP(
             input_size=53,  # PRIOR
-            hidden_size=hidden_size * num_heads,
-            num_layers=num_layers,
-            num_heads=num_heads,
-            fc_dropout=fc_dropout,
+            hidden_size=self.hidden_size,
+            num_layers=self.num_layers,
+            dropout=self.dropout,
         )
+
         self.criterion = nn.BCEWithLogitsLoss()
 
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+        self.lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=lr,
+            lr=self.lr,
         )
         # setup callbacks
         self.callbacks = {
@@ -138,18 +158,6 @@ class Experiment(IExperiment):
             ),
         }
 
-        self.wandb_logger.config.update(
-            {
-                "num_epochs": self.num_epochs,
-                "batch_size": self.batch_size,
-                "hidden_size": hidden_size,
-                "num_heads": num_heads,
-                "num_layers": num_layers,
-                "fc_dropout": fc_dropout,
-                "lr": lr,
-            }
-        )
-
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
         total_loss, total_accuracy = 0.0, 0.0
@@ -162,7 +170,6 @@ class Experiment(IExperiment):
                 loss = self.criterion(score, target)
                 score = torch.sigmoid(score)
                 pred = (score > 0.5).to(torch.int32)
-
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
                 total_loss += loss.sum().item()
@@ -189,37 +196,27 @@ class Experiment(IExperiment):
             "accuracy": total_accuracy,
             "loss": total_loss,
         }
-        if self.is_train_dataset:
-            self.wandb_logger.log(
-                {
-                    "train_score": self.dataset_metrics["score"],
-                    "train_accuracy": self.dataset_metrics["accuracy"],
-                    "train_loss": self.dataset_metrics["loss"],
-                }
-            )
-        else:
-            self.wandb_logger.log(
-                {
-                    "valid_score": self.dataset_metrics["score"],
-                    "valid_accuracy": self.dataset_metrics["accuracy"],
-                    "valid_loss": self.dataset_metrics["loss"],
-                }
-            )
 
     def on_experiment_end(self, exp: "IExperiment") -> None:
         super().on_experiment_end(exp)
         self._score = self.callbacks["early-stop"].best_score
 
-        self.wandb_logger.log(
-            {
-                "best_score": self._score,
-            }
-        )
-        self.wandb_logger.finish()
-
     def _objective(self, trial) -> float:
         self._trial = trial
         self.run()
+
+        # log experiment score and params
+        self.wandbLogger.log(
+            {
+                "auc": self._score,
+                "epochs": self.num_epochs,
+                "batch size": self.batch_size,
+                "MPL hidden size": self.hidden_size,
+                "MPL num layers": self.num_layers,
+                "MPL dropput": self.dropout,
+                "Adam lr": self.lr,
+            }
+        )
 
         return self._score
 
@@ -245,5 +242,5 @@ if __name__ == "__main__":
     Experiment(
         quantile=args.quantile,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-transformer-q{args.quantile}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-mlp-q{args.quantile}/",
     ).tune(n_trials=args.num_trials)
