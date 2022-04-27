@@ -96,7 +96,7 @@ class Experiment(IExperiment):
                 penalty = "l2"
 
             # configure logger
-            self.wandb_logger.name = {UTCNOW} + "-" + clf_type
+            self.wandb_logger.name = f"{UTCNOW}-{clf_type}"
             self.wandb_logger.config.update(
                 {
                     "classifier": clf_type,
@@ -117,7 +117,7 @@ class Experiment(IExperiment):
             alpha = self._trial.suggest_loguniform("classifier.sgd.alpha", low=1e-4, high=1e-2)
 
             # configure logger
-            self.wandb_logger.name = {UTCNOW} + "-" + clf_type
+            self.wandb_logger.name = f"{UTCNOW}-{clf_type}"
             self.wandb_logger.config.update(
                 {
                     "classifier": clf_type,
@@ -143,7 +143,7 @@ class Experiment(IExperiment):
             )
 
             # configure logger
-            self.wandb_logger.name = {UTCNOW} + "-" + clf_type
+            self.wandb_logger.name = f"{UTCNOW}-{clf_type}"
             self.wandb_logger.config.update(
                 {
                     "classifier": clf_type,
@@ -161,7 +161,7 @@ class Experiment(IExperiment):
             )
 
             # configure logger
-            self.wandb_logger.name = {UTCNOW} + "-" + clf_type
+            self.wandb_logger.name = f"{UTCNOW}-{clf_type}"
             self.wandb_logger.config.update(
                 {
                     "classifier": clf_type,

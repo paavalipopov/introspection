@@ -87,7 +87,7 @@ class Experiment(IExperiment):
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project="tune_transformer", name="{UTCNOW}-transformer"
+            project="tune_transformer", name=f"{UTCNOW}-transformer"
         )
 
         super().on_experiment_start(exp)
