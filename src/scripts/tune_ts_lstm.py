@@ -87,7 +87,7 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
-        self.wandb_logger: wandb.run = wandb.init(project="tune_lstm", name="lstm")
+        self.wandb_logger: wandb.run = wandb.init(project="tune_lstm", name="{UTCNOW}-lstm")
 
         super().on_experiment_start(exp)
         # setup experiment
