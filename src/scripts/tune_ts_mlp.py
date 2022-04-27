@@ -210,7 +210,6 @@ class Experiment(IExperiment):
             self.wandb_logger.log(
                 {
                     "train_score": self.dataset_metrics["score"],
-                    "train_accuracy": self.dataset_metrics["accuracy"],
                     "train_loss": self.dataset_metrics["loss"],
                 }
             )
@@ -218,7 +217,6 @@ class Experiment(IExperiment):
             self.wandb_logger.log(
                 {
                     "valid_score": self.dataset_metrics["score"],
-                    "valid_accuracy": self.dataset_metrics["accuracy"],
                     "valid_loss": self.dataset_metrics["loss"],
                 }
             )
