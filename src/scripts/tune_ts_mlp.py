@@ -33,9 +33,10 @@ class MLP(nn.Module):
     def __init__(
         self,
         input_size: int,
+        output_size: int,
         dropout: float = 0.5,
         hidden_size: int = 128,
-        num_layers: int = 1,
+        num_layers: int = 0,
     ):
         super(MLP, self).__init__()
         layers = [
@@ -44,15 +45,9 @@ class MLP(nn.Module):
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
         ]
-        for i in range(num_layers):
-            if i == num_layers - 1:
-                layer = nn.Sequential(
-                    nn.LayerNorm(hidden_size),
-                    nn.Dropout(p=dropout),
-                    nn.Linear(hidden_size, 1),
-                )
-            else:
-                layer = ResidualBlock(
+        for _ in range(num_layers):
+            layers.append(
+                ResidualBlock(
                     nn.Sequential(
                         nn.LayerNorm(hidden_size),
                         nn.Dropout(p=dropout),
@@ -60,14 +55,21 @@ class MLP(nn.Module):
                         nn.ReLU(),
                     )
                 )
-            layers.append(layer)
+            )
+        layers.append(
+            nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_size, output_size),
+            )
+        )
 
         self.fc = nn.Sequential(*layers)
 
     def forward(self, x):
         bs, ln, fs = x.shape
         fc_output = self.fc(x.view(-1, fs))
-        fc_output = fc_output.view(bs, ln, -1).mean(1).squeeze(1)
+        fc_output = fc_output.view(bs, ln, -1).mean(1)  # .squeeze(1)
         return fc_output
 
 
@@ -98,11 +100,11 @@ class Experiment(IExperiment):
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
-            torch.tensor(y_train, dtype=torch.float32),
+            torch.tensor(y_train, dtype=torch.int64),
         )
         self._valid_ds = TensorDataset(
             torch.tensor(X_test, dtype=torch.float32),
-            torch.tensor(y_test, dtype=torch.float32),
+            torch.tensor(y_test, dtype=torch.int64),
         )
 
     def on_experiment_start(self, exp: "IExperiment"):
@@ -124,17 +126,18 @@ class Experiment(IExperiment):
         }
         # setup model
         hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
-        num_layers = self._trial.suggest_int("mlp.num_layers", 1, 4)
+        num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
         dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
         self.model = MLP(
             input_size=53,  # PRIOR
+            output_size=2,  # PRIOR
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout,
         )
-        self.criterion = nn.BCEWithLogitsLoss()
 
         lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+        self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -170,31 +173,28 @@ class Experiment(IExperiment):
 
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
-        total_loss, total_accuracy = 0.0, 0.0
+        total_loss = 0.0
         self.model.train(self.is_train_dataset)
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
-                score = self.model(data)
-                loss = self.criterion(score, target)
-                score = torch.sigmoid(score)
-                pred = (score > 0.5).to(torch.int32)
+                logits = self.model(data)
+                loss = self.criterion(logits, target)
+                score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
                 total_loss += loss.sum().item()
-                total_accuracy += pred.eq(target.view_as(pred)).sum().item()
                 if self.is_train_dataset:
                     loss.backward()
                     self.optimizer.step()
 
         total_loss /= self.dataset_batch_step
-        total_accuracy /= self.dataset_batch_step * self.batch_size
 
         y_test = np.hstack(all_targets)
-        y_score = np.hstack(all_scores)
-        y_pred = (y_score > 0.5).astype(np.int32)
+        y_score = np.vstack(all_scores)
+        y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
         report = get_classification_report(y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5)
         for stats_type in [0, 1, "macro", "weighted"]:
             stats = report.loc[stats_type]
@@ -204,7 +204,6 @@ class Experiment(IExperiment):
 
         self.dataset_metrics = {
             "score": report["auc"].loc["weighted"],
-            "accuracy": total_accuracy,
             "loss": total_loss,
         }
         if self.is_train_dataset:
