@@ -15,38 +15,61 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from src.settings import LOGS_ROOT, UTCNOW
-from src.ts import load_ABIDE1, TSQuantileTransformer
+from src.ts import load_OASIS, TSQuantileTransformer
 
 import wandb
 
 
-class Transformer(nn.Module):
+class ResidualBlock(nn.Module):
+    def __init__(self, block):
+        super().__init__()
+        self.block = block
+
+    def forward(self, x: torch.Tensor):
+        return self.block(x) + x
+
+
+class MLP(nn.Module):
     def __init__(
         self,
         input_size: int,
-        fc_dropout: float = 0.5,
+        output_size: int,
+        dropout: float = 0.5,
         hidden_size: int = 128,
-        num_layers: int = 1,
-        num_heads: int = 8,
+        num_layers: int = 0,
     ):
-        super(Transformer, self).__init__()
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_size, nhead=num_heads, batch_first=True
-        )
-        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        super(MLP, self).__init__()
         layers = [
+            nn.LayerNorm(input_size),
+            nn.Dropout(p=dropout),
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
-            transformer_encoder,
         ]
-        self.transformer = nn.Sequential(*layers)
-        self.fc = nn.Sequential(nn.Dropout(p=fc_dropout), nn.Linear(hidden_size, 1))
+        for _ in range(num_layers):
+            layers.append(
+                ResidualBlock(
+                    nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(hidden_size, hidden_size),
+                        nn.ReLU(),
+                    )
+                )
+            )
+        layers.append(
+            nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_size, output_size),
+            )
+        )
+
+        self.fc = nn.Sequential(*layers)
 
     def forward(self, x):
-        fc_output = self.transformer(x)
-        fc_output = fc_output[:, -1, :]
-        # fc_output = fc_output.mean(1)
-        fc_output = self.fc(fc_output)
+        bs, ln, fs = x.shape
+        fc_output = self.fc(x.view(-1, fs))
+        fc_output = fc_output.view(bs, ln, -1).mean(1)  # .squeeze(1)
         return fc_output
 
 
@@ -60,7 +83,7 @@ class Experiment(IExperiment):
         self.logdir = logdir
 
     def on_tune_start(self):
-        features, labels = load_ABIDE1()
+        features, labels = load_OASIS()
         X_train, X_test, y_train, y_test = train_test_split(
             features, labels, test_size=0.2, random_state=42, stratify=labels
         )
@@ -77,18 +100,16 @@ class Experiment(IExperiment):
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
-            torch.tensor(y_train, dtype=torch.float32),
+            torch.tensor(y_train, dtype=torch.int64),
         )
         self._valid_ds = TensorDataset(
             torch.tensor(X_test, dtype=torch.float32),
-            torch.tensor(y_test, dtype=torch.float32),
+            torch.tensor(y_test, dtype=torch.int64),
         )
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
-        self.wandb_logger: wandb.run = wandb.init(
-            project="tune_transformer", name=f"{UTCNOW}-transformer"
-        )
+        self.wandb_logger: wandb.run = wandb.init(project="tune_mlp", name=f"{UTCNOW}-mlp")
 
         super().on_experiment_start(exp)
         # setup experiment
@@ -104,20 +125,19 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = self._trial.suggest_int("transformer.hidden_size", 4, 128, log=True)
-        num_heads = self._trial.suggest_int("transformer.num_heads", 1, 4)
-        num_layers = self._trial.suggest_int("transformer.num_layers", 1, 4)
-        fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.1, 0.9)
-        self.model = Transformer(
+        hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
+        num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
+        dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+        self.model = MLP(
             input_size=53,  # PRIOR
-            hidden_size=hidden_size * num_heads,
+            output_size=2,  # PRIOR
+            hidden_size=hidden_size,
             num_layers=num_layers,
-            num_heads=num_heads,
-            fc_dropout=fc_dropout,
+            dropout=dropout,
         )
-        self.criterion = nn.BCEWithLogitsLoss()
 
         lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+        self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -145,40 +165,36 @@ class Experiment(IExperiment):
                 "num_epochs": self.num_epochs,
                 "batch_size": self.batch_size,
                 "hidden_size": hidden_size,
-                "num_heads": num_heads,
                 "num_layers": num_layers,
-                "fc_dropout": fc_dropout,
+                "dropout": dropout,
                 "lr": lr,
             }
         )
 
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
-        total_loss, total_accuracy = 0.0, 0.0
+        total_loss = 0.0
         self.model.train(self.is_train_dataset)
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
-                score = self.model(data).view(-1)
-                loss = self.criterion(score, target)
-                score = torch.sigmoid(score)
-                pred = (score > 0.5).to(torch.int32)
+                logits = self.model(data)
+                loss = self.criterion(logits, target)
+                score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
                 total_loss += loss.sum().item()
-                total_accuracy += pred.eq(target.view_as(pred)).sum().item()
                 if self.is_train_dataset:
                     loss.backward()
                     self.optimizer.step()
 
         total_loss /= self.dataset_batch_step
-        total_accuracy /= self.dataset_batch_step * self.batch_size
 
         y_test = np.hstack(all_targets)
-        y_score = np.hstack(all_scores)
-        y_pred = (y_score > 0.5).astype(np.int32)
+        y_score = np.vstack(all_scores)
+        y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
         report = get_classification_report(y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5)
         for stats_type in [0, 1, "macro", "weighted"]:
             stats = report.loc[stats_type]
@@ -188,7 +204,6 @@ class Experiment(IExperiment):
 
         self.dataset_metrics = {
             "score": report["auc"].loc["weighted"],
-            "accuracy": total_accuracy,
             "loss": total_loss,
         }
 
@@ -197,10 +212,8 @@ class Experiment(IExperiment):
         self.wandb_logger.log(
             {
                 "train_score": self.epoch_metrics["train"]["score"],
-                "train_accuracy": self.epoch_metrics["train"]["accuracy"],
                 "train_loss": self.epoch_metrics["train"]["loss"],
                 "valid_score": self.epoch_metrics["valid"]["score"],
-                "valid_accuracy": self.epoch_metrics["valid"]["accuracy"],
                 "valid_loss": self.epoch_metrics["valid"]["loss"],
             },
         )
@@ -240,5 +253,5 @@ if __name__ == "__main__":
     Experiment(
         quantile=args.quantile,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-transformer-q{args.quantile}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-mlp-q{args.quantile}/",
     ).tune(n_trials=args.num_trials)
