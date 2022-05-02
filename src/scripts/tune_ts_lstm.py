@@ -23,6 +23,7 @@ import wandb
 class LSTM(nn.Module):
     def __init__(
         self,
+        input_len: int,
         fc_dropout: float = 0.5,
         hidden_size: int = 128,
         bidirectional: bool = False,
@@ -32,21 +33,16 @@ class LSTM(nn.Module):
         self.hidden_size = hidden_size
         self.bidirectional = bidirectional
         self.lstm = nn.LSTM(hidden_size=hidden_size, bidirectional=bidirectional, **kwargs)
+        lstm_out = 2 * hidden_size * input_len if bidirectional else hidden_size * input_len
         self.fc = nn.Sequential(
+            nn.Flatten(),
+            nn.LayerNorm(lstm_out),
             nn.Dropout(p=fc_dropout),
-            nn.Linear(2 * hidden_size if bidirectional else hidden_size, 1),
+            nn.Linear(lstm_out, 2),
         )
 
     def forward(self, x):
         lstm_output, _ = self.lstm(x)
-
-        if self.bidirectional:
-            out_forward = lstm_output[:, -1, : self.hidden_size]
-            out_reverse = lstm_output[:, 0, self.hidden_size :]
-            lstm_output = torch.cat((out_forward, out_reverse), 1)
-        else:
-            lstm_output = lstm_output[:, -1, :]
-
         fc_output = self.fc(lstm_output)
         return fc_output
 
@@ -78,11 +74,11 @@ class Experiment(IExperiment):
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
-            torch.tensor(y_train, dtype=torch.float32),
+            torch.tensor(y_train, dtype=torch.int64),
         )
         self._valid_ds = TensorDataset(
             torch.tensor(X_test, dtype=torch.float32),
-            torch.tensor(y_test, dtype=torch.float32),
+            torch.tensor(y_test, dtype=torch.int64),
         )
 
     def on_experiment_start(self, exp: "IExperiment"):
@@ -109,14 +105,15 @@ class Experiment(IExperiment):
         fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.9)
         self.model = LSTM(
             input_size=53,  # PRIOR
+            input_len=140,  # PRIOR
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
             bidirectional=bidirectional,
             fc_dropout=fc_dropout,
         )
+        self.criterion = nn.CrossEntropyLoss()
         lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
-        self.criterion = nn.BCEWithLogitsLoss()
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -152,31 +149,28 @@ class Experiment(IExperiment):
 
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
-        total_loss, total_accuracy = 0.0, 0.0
+        total_loss = 0.0
         self.model.train(self.is_train_dataset)
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
-                score = self.model(data).view(-1)
-                loss = self.criterion(score, target)
-                score = torch.sigmoid(score)
-                pred = (score > 0.5).to(torch.int32)
+                logits = self.model(data)
+                loss = self.criterion(logits, target)
+                score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
                 total_loss += loss.sum().item()
-                total_accuracy += pred.eq(target.view_as(pred)).sum().item()
                 if self.is_train_dataset:
                     loss.backward()
                     self.optimizer.step()
 
         total_loss /= self.dataset_batch_step
-        total_accuracy /= self.dataset_batch_step * self.batch_size
 
         y_test = np.hstack(all_targets)
-        y_score = np.hstack(all_scores)
-        y_pred = (y_score > 0.5).astype(np.int32)
+        y_score = np.vstack(all_scores)
+        y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
         report = get_classification_report(y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5)
         for stats_type in [0, 1, "macro", "weighted"]:
             stats = report.loc[stats_type]
@@ -186,7 +180,6 @@ class Experiment(IExperiment):
 
         self.dataset_metrics = {
             "score": report["auc"].loc["weighted"],
-            "accuracy": total_accuracy,
             "loss": total_loss,
         }
 

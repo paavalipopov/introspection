@@ -15,9 +15,10 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from src.settings import LOGS_ROOT, UTCNOW
-from src.ts import load_ABIDE1, TSQuantileTransformer
+from src.ts import load_FBIRN, TSQuantileTransformer
 
 import wandb
+from datetime import datetime
 
 
 class ResidualBlock(nn.Module):
@@ -33,7 +34,6 @@ class MLP(nn.Module):
     def __init__(
         self,
         input_size: int,
-        input_len: int,
         output_size: int,
         dropout: float = 0.5,
         hidden_size: int = 128,
@@ -74,49 +74,6 @@ class MLP(nn.Module):
         return fc_output
 
 
-class MLPv2(nn.Module):
-    def __init__(
-        self,
-        input_size: int,
-        input_len: int,
-        output_size: int,
-        dropout: float = 0.5,
-        hidden_size: int = 128,
-        num_layers: int = 0,
-    ):
-        super().__init__()
-        layers = [
-            nn.Flatten(),
-            nn.LayerNorm(input_len * input_size),
-            nn.Dropout(p=dropout),
-            nn.Linear(input_len * input_size, hidden_size),
-            nn.ReLU(),
-        ]
-        for _ in range(num_layers):
-            layers.append(
-                ResidualBlock(
-                    nn.Sequential(
-                        nn.LayerNorm(hidden_size),
-                        nn.Dropout(p=dropout),
-                        nn.Linear(hidden_size, hidden_size),
-                        nn.ReLU(),
-                    )
-                )
-            )
-        layers.append(
-            nn.Sequential(
-                nn.LayerNorm(hidden_size),
-                nn.Dropout(p=dropout),
-                nn.Linear(hidden_size, output_size),
-            )
-        )
-        self.fc = nn.Sequential(*layers)
-
-    def forward(self, x):
-        fc_output = self.fc(x)
-        return fc_output
-
-
 class Experiment(IExperiment):
     def __init__(self, quantile: bool, max_epochs: int, logdir: str) -> None:
         super().__init__()
@@ -127,7 +84,7 @@ class Experiment(IExperiment):
         self.logdir = logdir
 
     def on_tune_start(self):
-        features, labels = load_ABIDE1()
+        features, labels = load_FBIRN()
         X_train, X_test, y_train, y_test = train_test_split(
             features, labels, test_size=0.2, random_state=42, stratify=labels
         )
@@ -153,7 +110,8 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
-        self.wandb_logger: wandb.run = wandb.init(project="tune_mlp", name=f"{UTCNOW}-mlp")
+        utc_now = datetime.utcnow().strftime("%y%m%d.%H%M%S")
+        self.wandb_logger: wandb.run = wandb.init(project="mlp_fbirn", name=f"{utc_now}-mlp-fbirn")
 
         super().on_experiment_start(exp)
         # setup experiment
@@ -169,12 +127,11 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 1024, log=True)
+        hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
         num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-        dropout = self._trial.suggest_uniform("mlp.dropout", 0.2, 0.8)
+        dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
         self.model = MLP(
             input_size=53,  # PRIOR
-            input_len=140,  # PRIOR
             output_size=2,  # PRIOR
             hidden_size=hidden_size,
             num_layers=num_layers,
@@ -298,5 +255,5 @@ if __name__ == "__main__":
     Experiment(
         quantile=args.quantile,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-mlp-q{args.quantile}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-mlp-fbirn-q{args.quantile}/",
     ).tune(n_trials=args.num_trials)
