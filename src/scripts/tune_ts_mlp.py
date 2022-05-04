@@ -117,6 +117,9 @@ class MLPv2(nn.Module):
         return fc_output
 
 
+counter = 0
+
+
 class Experiment(IExperiment):
     def __init__(self, quantile: bool, max_epochs: int, logdir: str) -> None:
         super().__init__()
@@ -153,7 +156,11 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
-        self.wandb_logger: wandb.run = wandb.init(project="tune_mlp", name=f"{UTCNOW}-mlp")
+        global counter
+        self.wandb_logger: wandb.run = wandb.init(
+            project="tune_mlp", name=f"{UTCNOW}-{counter}-mlp"
+        )
+        counter += 1
 
         super().on_experiment_start(exp)
         # setup experiment

@@ -18,7 +18,6 @@ from src.settings import LOGS_ROOT, UTCNOW
 from src.ts import load_FBIRN, TSQuantileTransformer
 
 import wandb
-from datetime import datetime
 
 
 class ResidualBlock(nn.Module):
@@ -34,6 +33,7 @@ class MLP(nn.Module):
     def __init__(
         self,
         input_size: int,
+        input_len: int,
         output_size: int,
         dropout: float = 0.5,
         hidden_size: int = 128,
@@ -74,6 +74,52 @@ class MLP(nn.Module):
         return fc_output
 
 
+class MLPv2(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        input_len: int,
+        output_size: int,
+        dropout: float = 0.5,
+        hidden_size: int = 128,
+        num_layers: int = 0,
+    ):
+        super().__init__()
+        layers = [
+            nn.Flatten(),
+            nn.LayerNorm(input_len * input_size),
+            nn.Dropout(p=dropout),
+            nn.Linear(input_len * input_size, hidden_size),
+            nn.ReLU(),
+        ]
+        for _ in range(num_layers):
+            layers.append(
+                ResidualBlock(
+                    nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(hidden_size, hidden_size),
+                        nn.ReLU(),
+                    )
+                )
+            )
+        layers.append(
+            nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_size, output_size),
+            )
+        )
+        self.fc = nn.Sequential(*layers)
+
+    def forward(self, x):
+        fc_output = self.fc(x)
+        return fc_output
+
+
+counter = 0
+
+
 class Experiment(IExperiment):
     def __init__(self, quantile: bool, max_epochs: int, logdir: str) -> None:
         super().__init__()
@@ -110,8 +156,11 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
-        utc_now = datetime.utcnow().strftime("%y%m%d.%H%M%S")
-        self.wandb_logger: wandb.run = wandb.init(project="mlp_fbirn", name=f"{utc_now}-mlp-fbirn")
+        global counter
+        self.wandb_logger: wandb.run = wandb.init(
+            project="tune_mlp", name=f"{UTCNOW}-{counter}-mlp-fbirn"
+        )
+        counter += 1
 
         super().on_experiment_start(exp)
         # setup experiment
@@ -127,11 +176,12 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
+        hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 1024, log=True)
         num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-        dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+        dropout = self._trial.suggest_uniform("mlp.dropout", 0.2, 0.8)
         self.model = MLP(
             input_size=53,  # PRIOR
+            input_len=140,  # PRIOR
             output_size=2,  # PRIOR
             hidden_size=hidden_size,
             num_layers=num_layers,

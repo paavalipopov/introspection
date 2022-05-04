@@ -54,6 +54,9 @@ class Transformer(nn.Module):
         return fc_output
 
 
+counter = 0
+
+
 class Experiment(IExperiment):
     def __init__(self, quantile: bool, max_epochs: int, logdir: str) -> None:
         super().__init__()
@@ -90,9 +93,11 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
+        global counter
         self.wandb_logger: wandb.run = wandb.init(
-            project="tune_transformer", name=f"{UTCNOW}-transformer"
+            project="tune_transformer", name=f"{UTCNOW}-{counter}-transformer"
         )
+        counter += 1
 
         super().on_experiment_start(exp)
         # setup experiment
@@ -198,10 +203,8 @@ class Experiment(IExperiment):
         self.wandb_logger.log(
             {
                 "train_score": self.epoch_metrics["train"]["score"],
-                "train_accuracy": self.epoch_metrics["train"]["accuracy"],
                 "train_loss": self.epoch_metrics["train"]["loss"],
                 "valid_score": self.epoch_metrics["valid"]["score"],
-                "valid_accuracy": self.epoch_metrics["valid"]["accuracy"],
                 "valid_loss": self.epoch_metrics["valid"]["loss"],
             },
         )
