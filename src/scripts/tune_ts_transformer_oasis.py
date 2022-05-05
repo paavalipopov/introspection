@@ -20,56 +20,37 @@ from src.ts import load_OASIS, TSQuantileTransformer
 import wandb
 
 
-class ResidualBlock(nn.Module):
-    def __init__(self, block):
-        super().__init__()
-        self.block = block
-
-    def forward(self, x: torch.Tensor):
-        return self.block(x) + x
-
-
-class MLP(nn.Module):
+class Transformer(nn.Module):
     def __init__(
         self,
         input_size: int,
-        output_size: int,
-        dropout: float = 0.5,
+        input_len: int,
+        fc_dropout: float = 0.5,
         hidden_size: int = 128,
-        num_layers: int = 0,
+        num_layers: int = 1,
+        num_heads: int = 8,
     ):
-        super(MLP, self).__init__()
+        super(Transformer, self).__init__()
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size, nhead=num_heads, batch_first=True
+        )
+        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         layers = [
-            nn.LayerNorm(input_size),
-            nn.Dropout(p=dropout),
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
+            transformer_encoder,
         ]
-        for _ in range(num_layers):
-            layers.append(
-                ResidualBlock(
-                    nn.Sequential(
-                        nn.LayerNorm(hidden_size),
-                        nn.Dropout(p=dropout),
-                        nn.Linear(hidden_size, hidden_size),
-                        nn.ReLU(),
-                    )
-                )
-            )
-        layers.append(
-            nn.Sequential(
-                nn.LayerNorm(hidden_size),
-                nn.Dropout(p=dropout),
-                nn.Linear(hidden_size, output_size),
-            )
+        self.transformer = nn.Sequential(*layers)
+        self.fc = nn.Sequential(
+            nn.Flatten(),
+            nn.LayerNorm(input_len * hidden_size),
+            nn.Dropout(p=fc_dropout),
+            nn.Linear(input_len * hidden_size, 2),
         )
 
-        self.fc = nn.Sequential(*layers)
-
     def forward(self, x):
-        bs, ln, fs = x.shape
-        fc_output = self.fc(x.view(-1, fs))
-        fc_output = fc_output.view(bs, ln, -1).mean(1)  # .squeeze(1)
+        fc_output = self.transformer(x)
+        fc_output = self.fc(fc_output)
         return fc_output
 
 
@@ -112,9 +93,11 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
+        global counter
         self.wandb_logger: wandb.run = wandb.init(
-            project="mlp_oasis", name=f"{UTCNOW}-{counter}-mlp"
+            project="transformer_oasis", name=f"{UTCNOW}-{counter}-transformer-oasis"
         )
+        counter += 1
 
         super().on_experiment_start(exp)
         # setup experiment
@@ -130,15 +113,17 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
-        num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-        dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
-        self.model = MLP(
+        hidden_size = self._trial.suggest_int("transformer.hidden_size", 4, 128, log=True)
+        num_heads = self._trial.suggest_int("transformer.num_heads", 1, 4)
+        num_layers = self._trial.suggest_int("transformer.num_layers", 1, 4)
+        fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.2, 0.8)
+        self.model = Transformer(
             input_size=53,  # PRIOR
-            output_size=2,  # PRIOR
-            hidden_size=hidden_size,
+            input_len=156,  # PRIOR
+            hidden_size=hidden_size * num_heads,
             num_layers=num_layers,
-            dropout=dropout,
+            num_heads=num_heads,
+            fc_dropout=fc_dropout,
         )
 
         lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
@@ -170,8 +155,9 @@ class Experiment(IExperiment):
                 "num_epochs": self.num_epochs,
                 "batch_size": self.batch_size,
                 "hidden_size": hidden_size,
+                "num_heads": num_heads,
                 "num_layers": num_layers,
-                "dropout": dropout,
+                "fc_dropout": fc_dropout,
                 "lr": lr,
             }
         )
@@ -258,5 +244,5 @@ if __name__ == "__main__":
     Experiment(
         quantile=args.quantile,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-mlp-oasis-q{args.quantile}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-transformer-oasis-q{args.quantile}/",
     ).tune(n_trials=args.num_trials)

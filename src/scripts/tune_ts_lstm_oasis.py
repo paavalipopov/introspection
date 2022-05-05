@@ -20,56 +20,30 @@ from src.ts import load_OASIS, TSQuantileTransformer
 import wandb
 
 
-class ResidualBlock(nn.Module):
-    def __init__(self, block):
-        super().__init__()
-        self.block = block
-
-    def forward(self, x: torch.Tensor):
-        return self.block(x) + x
-
-
-class MLP(nn.Module):
+class LSTM(nn.Module):
     def __init__(
         self,
-        input_size: int,
-        output_size: int,
-        dropout: float = 0.5,
+        input_len: int,
+        fc_dropout: float = 0.5,
         hidden_size: int = 128,
-        num_layers: int = 0,
+        bidirectional: bool = False,
+        **kwargs,
     ):
-        super(MLP, self).__init__()
-        layers = [
-            nn.LayerNorm(input_size),
-            nn.Dropout(p=dropout),
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-        ]
-        for _ in range(num_layers):
-            layers.append(
-                ResidualBlock(
-                    nn.Sequential(
-                        nn.LayerNorm(hidden_size),
-                        nn.Dropout(p=dropout),
-                        nn.Linear(hidden_size, hidden_size),
-                        nn.ReLU(),
-                    )
-                )
-            )
-        layers.append(
-            nn.Sequential(
-                nn.LayerNorm(hidden_size),
-                nn.Dropout(p=dropout),
-                nn.Linear(hidden_size, output_size),
-            )
+        super(LSTM, self).__init__()
+        self.hidden_size = hidden_size
+        self.bidirectional = bidirectional
+        self.lstm = nn.LSTM(hidden_size=hidden_size, bidirectional=bidirectional, **kwargs)
+        lstm_out = 2 * hidden_size * input_len if bidirectional else hidden_size * input_len
+        self.fc = nn.Sequential(
+            nn.Flatten(),
+            nn.LayerNorm(lstm_out),
+            nn.Dropout(p=fc_dropout),
+            nn.Linear(lstm_out, 2),
         )
 
-        self.fc = nn.Sequential(*layers)
-
     def forward(self, x):
-        bs, ln, fs = x.shape
-        fc_output = self.fc(x.view(-1, fs))
-        fc_output = fc_output.view(bs, ln, -1).mean(1)  # .squeeze(1)
+        lstm_output, _ = self.lstm(x)
+        fc_output = self.fc(lstm_output)
         return fc_output
 
 
@@ -112,9 +86,11 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
+        global counter
         self.wandb_logger: wandb.run = wandb.init(
-            project="mlp_oasis", name=f"{UTCNOW}-{counter}-mlp"
+            project="lstm_oasis", name=f"{UTCNOW}-{counter}-lstm-oasis"
         )
+        counter += 1
 
         super().on_experiment_start(exp)
         # setup experiment
@@ -130,19 +106,21 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
-        num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-        dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
-        self.model = MLP(
+        hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
+        num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
+        bidirectional = self._trial.suggest_categorical("lstm.bidirectional", [True, False])
+        fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.9)
+        self.model = LSTM(
             input_size=53,  # PRIOR
-            output_size=2,  # PRIOR
+            input_len=156,  # PRIOR
             hidden_size=hidden_size,
             num_layers=num_layers,
-            dropout=dropout,
+            batch_first=True,
+            bidirectional=bidirectional,
+            fc_dropout=fc_dropout,
         )
-
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
         self.criterion = nn.CrossEntropyLoss()
+        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -164,14 +142,14 @@ class Experiment(IExperiment):
                 minimize=False,
             ),
         }
-
         self.wandb_logger.config.update(
             {
                 "num_epochs": self.num_epochs,
                 "batch_size": self.batch_size,
                 "hidden_size": hidden_size,
                 "num_layers": num_layers,
-                "dropout": dropout,
+                "bidirectional": bidirectional,
+                "fc_dropout": fc_dropout,
                 "lr": lr,
             }
         )
@@ -258,5 +236,5 @@ if __name__ == "__main__":
     Experiment(
         quantile=args.quantile,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-mlp-oasis-q{args.quantile}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-lstm-oasis-q{args.quantile}/",
     ).tune(n_trials=args.num_trials)

@@ -1,3 +1,4 @@
+from imp import load_source
 import h5py
 import numpy as np
 import pandas as pd
@@ -5,6 +6,8 @@ from sklearn.preprocessing import QuantileTransformer
 import torch
 
 from src.settings import DATA_ROOT
+
+# import pdb
 
 
 class TSQuantileTransformer:
@@ -43,12 +46,17 @@ def load_ABIDE1(
     indices_path: str = DATA_ROOT.joinpath("abide/correct_indices_GSP.csv"),
     labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv"),
 ):
+    # pdb.set_trace()
     hf = h5py.File(dataset_path, "r")
     data = hf.get("ABIDE1_dataset")
+    # pdb.set_trace()
     data = np.array(data)
+    # pdb.set_trace()
     num_subjects = data.shape[0]
     num_components = 100
+    # pdb.set_trace()
     data = data.reshape(num_subjects, num_components, -1)
+    # pdb.set_trace()
 
     # take only those brain networks that are not noise
     df = pd.read_csv(indices_path, header=None)
@@ -60,6 +68,12 @@ def load_ABIDE1(
 
     df = pd.read_csv(labels_path, header=None)
     labels = df.values.flatten() - 1
+    # pdb.set_trace()
+
+    #     (Pdb) labels.shape
+    # (569,)
+    # (Pdb) data.shape
+    # (569, 100, 140)
 
     return finalData, labels
 
@@ -98,6 +112,7 @@ def load_OASIS(
     labels_path: str = DATA_ROOT.joinpath("oasis/labels_OASIS_6_classes.csv"),
     sessions_path: str = DATA_ROOT.joinpath("oasis/oasis_first_sessions_index.csv"),
 ):
+    # pdb.set_trace()
     data = np.load(dataset_path)
     # 2826 - sessions - data.shape[0]
     # 100 - components - data.shape[1]
@@ -106,7 +121,9 @@ def load_OASIS(
     indices = pd.read_csv(indices_path, header=None)
     idx = indices[0].values - 1
 
+    # pdb.set_trace()
     data = data[:, idx, :156]
+    # pdb.set_trace()
     # 53 - components - data.shape[1] - cut off noisy data
     # 156 - time points - data.shape[2] - the rest of points are cut off (some of them are 0)
 
@@ -123,6 +140,8 @@ def load_OASIS(
 
     if only_two_classes:
         labels = np.asarray(list(map(lambda x: 0 if (x == 0) else 1, labels)))
+
+    # pdb.set_trace()
 
     return data, labels
 
@@ -264,3 +283,14 @@ def load_ABIDE1_origin(
         test_features,
         test_labels,
     )
+
+
+# load_ABIDE1()
+# load_OASIS()
+
+# oasis
+# (Pdb) lstm_output.shape
+# torch.Size([49, 156, 476])
+
+# (Pdb) lstm_output.shape
+# torch.Size([34, 140, 380])
