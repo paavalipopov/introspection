@@ -19,8 +19,6 @@ from src.ts import load_ABIDE1, TSQuantileTransformer
 
 import wandb
 
-import pdb
-
 
 class LSTM(nn.Module):
     def __init__(
@@ -44,11 +42,8 @@ class LSTM(nn.Module):
         )
 
     def forward(self, x):
-        pdb.set_trace()
         lstm_output, _ = self.lstm(x)
-        pdb.set_trace()
         fc_output = self.fc(lstm_output)
-        pdb.set_trace()
         return fc_output
 
 
