@@ -7,8 +7,6 @@ import torch
 
 from src.settings import DATA_ROOT
 
-# import pdb
-
 
 class TSQuantileTransformer:
     def __init__(self, *args, n_quantiles: int, **kwargs):
@@ -49,14 +47,10 @@ def load_ABIDE1(
     # pdb.set_trace()
     hf = h5py.File(dataset_path, "r")
     data = hf.get("ABIDE1_dataset")
-    # pdb.set_trace()
     data = np.array(data)
-    # pdb.set_trace()
     num_subjects = data.shape[0]
     num_components = 100
-    # pdb.set_trace()
     data = data.reshape(num_subjects, num_components, -1)
-    # pdb.set_trace()
 
     # take only those brain networks that are not noise
     df = pd.read_csv(indices_path, header=None)
@@ -68,12 +62,6 @@ def load_ABIDE1(
 
     df = pd.read_csv(labels_path, header=None)
     labels = df.values.flatten() - 1
-    # pdb.set_trace()
-
-    #     (Pdb) labels.shape
-    # (569,)
-    # (Pdb) data.shape
-    # (569, 100, 140)
 
     return finalData, labels
 
@@ -112,7 +100,6 @@ def load_OASIS(
     labels_path: str = DATA_ROOT.joinpath("oasis/labels_OASIS_6_classes.csv"),
     sessions_path: str = DATA_ROOT.joinpath("oasis/oasis_first_sessions_index.csv"),
 ):
-    # pdb.set_trace()
     data = np.load(dataset_path)
     # 2826 - sessions - data.shape[0]
     # 100 - components - data.shape[1]
@@ -121,11 +108,7 @@ def load_OASIS(
     indices = pd.read_csv(indices_path, header=None)
     idx = indices[0].values - 1
 
-    # pdb.set_trace()
     data = data[:, idx, :156]
-    # pdb.set_trace()
-    # 53 - components - data.shape[1] - cut off noisy data
-    # 156 - time points - data.shape[2] - the rest of points are cut off (some of them are 0)
 
     labels = pd.read_csv(labels_path, header=None)
     labels = labels.values.flatten().astype("int") - 1
@@ -141,8 +124,6 @@ def load_OASIS(
     if only_two_classes:
         labels = np.asarray(list(map(lambda x: 0 if (x == 0) else 1, labels)))
 
-    # pdb.set_trace()
-
     return data, labels
 
 
@@ -151,146 +132,3 @@ def _find_indices_of_each_class(all_labels):
     SZ_index = (all_labels == 1).nonzero()
 
     return HC_index, SZ_index
-
-
-# taken from https://github.com/UsmanMahmood27/MILC
-def load_ABIDE1_origin(
-    dataset_path: str = DATA_ROOT.joinpath("abide/ABIDE1_AllData.h5"),
-    hc_path: str = DATA_ROOT.joinpath("abide/ABIDE1_HC_TrainingIndex.h5"),
-    sz_path: str = DATA_ROOT.joinpath("abide/ABIDE1_SZ_TrainingIndex.h5"),
-    indices_path: str = DATA_ROOT.joinpath("abide/correct_indices_GSP.csv"),
-    index_array_path: str = DATA_ROOT.joinpath("abide/index_array_labelled_ABIDE1.csv"),
-    labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv"),
-):
-    ID = 5
-    ntrials = 1
-    tr_sub = [15, 25, 50, 75, 100, 150]
-    sub_per_class = tr_sub[ID]
-    sample_x = 100
-    sample_y = 20
-    subjects = 569
-    tc = 140
-    samples_per_subject = 13
-    n_val_HC = 50
-    n_val_SZ = 50
-    n_test_HC = 50
-    n_test_SZ = 50
-    window_shift = 10
-
-    hf = h5py.File(dataset_path, "r")  # "../Data/ABIDE1_AllData.h5"
-    data = hf.get("ABIDE1_dataset")
-    data = np.array(data)
-    data = data.reshape(subjects, sample_x, tc)
-
-    # Get Training indices for cobre and convert them to tensor.
-    # this is to have same training samples everytime.
-    hf_hc = h5py.File(hc_path, "r")
-    HC_TrainingIndex = hf_hc.get("HC_TrainingIndex")
-    HC_TrainingIndex = np.array(HC_TrainingIndex)
-    HC_TrainingIndex = torch.from_numpy(HC_TrainingIndex)
-
-    hf_sz = h5py.File(sz_path, "r")
-    SZ_TrainingIndex = hf_sz.get("SZ_TrainingIndex")
-    SZ_TrainingIndex = np.array(SZ_TrainingIndex)
-    SZ_TrainingIndex = torch.from_numpy(SZ_TrainingIndex)
-
-    # if args.fMRI_twoD:
-    #     finalData = data
-    #     finalData = torch.from_numpy(finalData).float()
-    #     finalData = finalData.permute(0, 2, 1)
-    #     finalData = finalData.reshape(
-    #         finalData.shape[0], finalData.shape[1], finalData.shape[2], 1
-    #     )
-    # else:
-    finalData = np.zeros((subjects, samples_per_subject, sample_x, sample_y))
-    for i in range(subjects):
-        for j in range(samples_per_subject):
-            finalData[i, j, :, :] = data[i, :, (j * window_shift) : (j * window_shift) + sample_y]
-    finalData = torch.from_numpy(finalData).float()
-
-    # print(finalData.shape)
-    filename = indices_path
-    # print(filename)
-    df = pd.read_csv(filename, header=None)
-    c_indices = df.values
-    c_indices = torch.from_numpy(c_indices).int()
-    c_indices = c_indices.view(53)
-    c_indices = c_indices - 1
-    finalData2 = finalData[:, :, c_indices.long(), :]
-
-    filename = index_array_path
-    df = pd.read_csv(filename, header=None)
-    index_array = df.values
-    index_array = torch.from_numpy(index_array).long()
-    index_array = index_array.view(subjects)
-
-    filename = labels_path
-    df = pd.read_csv(filename, header=None)
-    df = pd.read_csv(filename, header=None)
-    all_labels = df.values
-    all_labels = torch.from_numpy(all_labels).int()
-    all_labels = all_labels.view(subjects)
-    all_labels = all_labels - 1
-    finalData2 = finalData2[index_array, :, :, :]
-    all_labels = all_labels[index_array]
-
-    HC_index, SZ_index = _find_indices_of_each_class(all_labels)
-
-    total_HC_index_tr = HC_index[: len(HC_index) - (n_val_HC + n_test_HC)]
-    total_SZ_index_tr = SZ_index[: len(SZ_index) - (n_val_SZ + n_test_SZ)]
-
-    HC_index_val = HC_index[len(HC_index) - (n_val_HC + n_test_HC) : len(HC_index) - n_test_HC]
-    SZ_index_val = SZ_index[len(HC_index) - (n_val_SZ + n_test_SZ) : len(HC_index) - n_test_SZ]
-
-    HC_index_test = HC_index[len(HC_index) - (n_test_HC) :]
-    SZ_index_test = SZ_index[len(SZ_index) - (n_test_SZ) :]
-
-    # for trial in range(ntrials):
-    trial = 0
-    HC_random = HC_TrainingIndex[trial]
-    SZ_random = SZ_TrainingIndex[trial]
-    HC_random = HC_random[:sub_per_class]
-    SZ_random = SZ_random[:sub_per_class]
-    #
-
-    # Choose the subject_per_class indices from HC_index_val and SZ_index_val
-    # using random numbers
-
-    HC_index_tr = total_HC_index_tr[HC_random]
-    SZ_index_tr = total_SZ_index_tr[SZ_random]
-
-    tr_index = torch.cat((HC_index_tr, SZ_index_tr))
-    val_index = torch.cat((HC_index_val, SZ_index_val))
-    test_index = torch.cat((HC_index_test, SZ_index_test))
-
-    tr_index = tr_index.view(tr_index.size(0))
-    val_index = val_index.view(val_index.size(0))
-    test_index = test_index.view(test_index.size(0))
-
-    train_featues = finalData2[tr_index, :, :, :]
-    valid_features = finalData2[val_index, :, :, :]
-    test_features = finalData2[test_index, :, :, :]
-
-    train_labels = all_labels[tr_index.long()]
-    valid_labels = all_labels[val_index.long()]
-    test_labels = all_labels[test_index.long()]
-
-    return (
-        train_featues,
-        train_labels,
-        valid_features,
-        valid_labels,
-        test_features,
-        test_labels,
-    )
-
-
-# load_ABIDE1()
-# load_OASIS()
-
-# oasis
-# (Pdb) lstm_output.shape
-# torch.Size([49, 156, 476])
-
-# (Pdb) lstm_output.shape
-# torch.Size([34, 140, 380])
