@@ -113,7 +113,7 @@ class Experiment(IExperiment):
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project="mlp_oasis", name=f"{UTCNOW}-{counter}-mlp"
+            project="mlp_oasis", name=f"{UTCNOW}-{counter}-mlp-oasis"
         )
 
         super().on_experiment_start(exp)
