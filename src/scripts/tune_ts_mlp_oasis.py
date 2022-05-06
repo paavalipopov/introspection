@@ -68,8 +68,8 @@ class MLP(nn.Module):
 
     def forward(self, x):
         bs, ln, fs = x.shape
-        fc_output = self.fc(x.view(-1, fs))
-        fc_output = fc_output.view(bs, ln, -1).mean(1)  # .squeeze(1)
+        fc_output = self.fc(x.reshape(-1, fs))
+        fc_output = fc_output.reshape(bs, ln, -1).mean(1)  # .squeeze(1)
         return fc_output
 
 
@@ -137,7 +137,6 @@ class Experiment(IExperiment):
         dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
         self.model = MLP(
             input_size=53,  # PRIOR
-            input_len=156,  # PRIOR
             output_size=2,  # PRIOR
             hidden_size=hidden_size,
             num_layers=num_layers,
