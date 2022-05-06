@@ -122,7 +122,16 @@ def load_OASIS(
         labels = labels[first_session]
 
     if only_two_classes:
-        labels = np.asarray(list(map(lambda x: 0 if (x == 0) else 1, labels)))
+        # leaves values with labels 0 and 1 only
+        filter_array = []
+        for label in labels:
+            if label in (0, 1):
+                filter_array.append(True)
+            else:
+                filter_array.append(False)
+
+        data = data[filter_array, :, :]
+        labels = labels[filter_array]
 
     return data, labels
 

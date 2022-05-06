@@ -6,12 +6,6 @@ __pycache__/
 
 #data
 /assets/data/
-!assets/data/abide/*.csv
-!assets/data/abide/*.h5
-!assets/data/cobre/*.csv
-!assets/data/cobre/*.h5
-!assets/data/fbirn/*.csv
-!assets/data/fbirn/*.h5
 
 
 # C extensions
