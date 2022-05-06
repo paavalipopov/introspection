@@ -112,9 +112,11 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
+        global counter
         self.wandb_logger: wandb.run = wandb.init(
             project="mlp_oasis", name=f"{UTCNOW}-{counter}-mlp-oasis"
         )
+        counter += 1
 
         super().on_experiment_start(exp)
         # setup experiment
