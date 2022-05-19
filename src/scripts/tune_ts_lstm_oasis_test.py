@@ -8,7 +8,6 @@ from catalyst import utils
 import numpy as np
 import optuna
 from sklearn.model_selection import train_test_split
-from sklearn.model_selection import StratifiedKFold
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -16,7 +15,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from src.settings import LOGS_ROOT, UTCNOW
-from src.ts import load_balanced_OASIS, TSQuantileTransformer
+from src.ts import load_OASIS, TSQuantileTransformer
 
 import wandb
 
@@ -48,6 +47,9 @@ class LSTM(nn.Module):
         return fc_output
 
 
+counter = 0
+
+
 class Experiment(IExperiment):
     def __init__(self, quantile: bool, max_epochs: int, logdir: str) -> None:
         super().__init__()
@@ -57,18 +59,18 @@ class Experiment(IExperiment):
         self.max_epochs = max_epochs
         self.logdir = logdir
 
-    def on_tune_start(self, trial, k):
-        self.k = k
-        self.trial = trial
-        features, labels = load_balanced_OASIS()
-
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42 + trial)
-        skf.get_n_splits(features, labels)
-
-        train_index, test_index = list(skf.split(features, labels))[self.k]
-
-        X_train, X_test = features[train_index], features[test_index]
-        y_train, y_test = labels[train_index], labels[test_index]
+    def on_tune_start(self):
+        features, labels = load_OASIS()
+        X_train, X_test, y_train, y_test = train_test_split(
+            features, labels, test_size=0.2, random_state=42, stratify=labels
+        )
+        if self._quantile:
+            n_quantiles = 10
+            n_offset = 3  # 0 - pad, 1 - cls, 2 - mask
+            transform = TSQuantileTransformer(n_quantiles=n_quantiles, random_state=42)
+            transform = transform.fit(X_train)
+            X_train = transform.transform(X_train) + n_offset
+            X_test = transform.transform(X_test) + n_offset
 
         X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
         X_test = np.swapaxes(X_test, 1, 2)
@@ -84,53 +86,17 @@ class Experiment(IExperiment):
 
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
+        global counter
         self.wandb_logger: wandb.run = wandb.init(
-            project="lstm_oasis_cv", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
+            project="lstm_oasis_test", name=f"{UTCNOW}-{counter}-lstm-oasis"
         )
+        counter += 1
 
         super().on_experiment_start(exp)
-        # # setup experiment
-        # self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
-        # # setup data
-        # self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
-        # self.datasets = {
-        #     "train": DataLoader(
-        #         self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
-        #     ),
-        #     "valid": DataLoader(
-        #         self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
-        #     ),
-        # }
-        # # setup model
-        # hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
-        # num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
-        # bidirectional = self._trial.suggest_categorical("lstm.bidirectional", [True, False])
-        # fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.8)
-        # self.model = LSTM(
-        #     input_size=53,  # PRIOR
-        #     input_len=156,  # PRIOR
-        #     hidden_size=hidden_size,
-        #     num_layers=num_layers,
-        #     batch_first=True,
-        #     bidirectional=bidirectional,
-        #     fc_dropout=fc_dropout,
-        # )
-
-        # best tune ts
-        # self.model = LSTM(
-        #     input_size=53,  # PRIOR
-        #     input_len=156,  # PRIOR
-        #     hidden_size=37,
-        #     num_layers=4,
-        #     batch_first=True,
-        #     bidirectional=True,
-        #     fc_dropout=0.470422547781582,
-        # )
-
-        ######### best CV
-
-        self.num_epochs = 32
-        self.batch_size = 16
+        # setup experiment
+        self.num_epochs = 20
+        # setup data
+        self.batch_size = 61
         self.datasets = {
             "train": DataLoader(
                 self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
@@ -140,11 +106,10 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = 52
-        num_layers = 3
-        bidirectional = False
-        fc_dropout = 0.2626756675371412
-
+        hidden_size = 37
+        num_layers = 4
+        bidirectional = True
+        fc_dropout = 0.470422547781582
         self.model = LSTM(
             input_size=53,  # PRIOR
             input_len=156,  # PRIOR
@@ -154,10 +119,8 @@ class Experiment(IExperiment):
             bidirectional=bidirectional,
             fc_dropout=fc_dropout,
         )
-
         self.criterion = nn.CrossEntropyLoss()
-        # lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
-        lr = 0.000403084751422323
+        lr = 0.0006893799377173283
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -252,14 +215,12 @@ class Experiment(IExperiment):
         return self._score
 
     def tune(self, n_trials: int):
-        for trial in range(n_trials):
-            for k in range(5):
-                self.on_tune_start(trial, k)
-                self.study = optuna.create_study(direction="maximize")
-                self.study.optimize(self._objective, n_trials=1, n_jobs=1)
-                logfile = f"{self.logdir}/optuna.csv"
-                df = self.study.trials_dataframe()
-                df.to_csv(logfile, index=False)
+        self.on_tune_start()
+        self.study = optuna.create_study(direction="maximize")
+        self.study.optimize(self._objective, n_trials=n_trials, n_jobs=1)
+        logfile = f"{self.logdir}/optuna.csv"
+        df = self.study.trials_dataframe()
+        df.to_csv(logfile, index=False)
 
 
 if __name__ == "__main__":
@@ -275,5 +236,5 @@ if __name__ == "__main__":
     Experiment(
         quantile=args.quantile,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-lstm-oasis-cv-q{args.quantile}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-lstm-oasis-q{args.quantile}/",
     ).tune(n_trials=args.num_trials)
