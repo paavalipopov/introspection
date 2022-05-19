@@ -136,8 +136,41 @@ def load_OASIS(
     return data, labels
 
 
+def load_balanced_OASIS():
+    features, labels = load_OASIS()
+
+    filter_array_0 = []
+    filter_array_1 = []
+
+    for label in labels:
+        if label == 0:
+            filter_array_0.append(True)
+            filter_array_1.append(False)
+        else:
+            filter_array_0.append(False)
+            filter_array_1.append(True)
+
+    features_0 = features[filter_array_0]
+    labels_0 = labels[filter_array_0]
+    features_1 = features[filter_array_1]
+    labels_1 = labels[filter_array_1]
+
+    features_0 = features_0[:150]
+    labels_0 = labels_0[:150]
+    features_1 = features_1[:150]
+    labels_1 = labels_1[:150]
+
+    features = np.concatenate((features_0, features_1), axis=0)
+    labels = np.concatenate((labels_0, labels_1), axis=0)
+
+    return features, labels
+
+
 def _find_indices_of_each_class(all_labels):
     HC_index = (all_labels == 0).nonzero()
     SZ_index = (all_labels == 1).nonzero()
 
     return HC_index, SZ_index
+
+
+load_balanced_OASIS()
