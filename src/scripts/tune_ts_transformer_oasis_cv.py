@@ -133,7 +133,6 @@ class Experiment(IExperiment):
         # )
 
         self.num_epochs = 32
-        # setup data
         self.batch_size = 10
         self.datasets = {
             "train": DataLoader(
@@ -260,7 +259,7 @@ class Experiment(IExperiment):
             for k in range(5):
                 self.on_tune_start(trial, k)
                 self.study = optuna.create_study(direction="maximize")
-                self.study.optimize(self._objective, n_trials=n_trials, n_jobs=1)
+                self.study.optimize(self._objective, n_trials=1, n_jobs=1)
                 logfile = f"{self.logdir}/optuna.csv"
                 df = self.study.trials_dataframe()
                 df.to_csv(logfile, index=False)
