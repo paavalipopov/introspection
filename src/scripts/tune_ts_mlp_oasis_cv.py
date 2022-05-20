@@ -116,9 +116,9 @@ class Experiment(IExperiment):
 
         super().on_experiment_start(exp)
         # setup experiment
-        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 1, self.max_epochs)
-        # setup data
-        self.batch_size = self._trial.suggest_int("data.batch_size", 32, 64, log=True)
+        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
+        # # setup data
+        self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
         self.datasets = {
             "train": DataLoader(
                 self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
