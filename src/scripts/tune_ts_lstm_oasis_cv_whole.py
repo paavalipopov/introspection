@@ -85,52 +85,15 @@ class Experiment(IExperiment):
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project="lstm_oasis_cv_whole", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
+            project="tune_lstm_oasis_cv_whole", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
         )
 
         super().on_experiment_start(exp)
-        # # setup experiment
-        # self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
-        # # setup data
-        # self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
-        # self.datasets = {
-        #     "train": DataLoader(
-        #         self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
-        #     ),
-        #     "valid": DataLoader(
-        #         self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
-        #     ),
-        # }
-        # # setup model
-        # hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
-        # num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
-        # bidirectional = self._trial.suggest_categorical("lstm.bidirectional", [True, False])
-        # fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.8)
-        # self.model = LSTM(
-        #     input_size=53,  # PRIOR
-        #     input_len=156,  # PRIOR
-        #     hidden_size=hidden_size,
-        #     num_layers=num_layers,
-        #     batch_first=True,
-        #     bidirectional=bidirectional,
-        #     fc_dropout=fc_dropout,
-        # )
 
-        # best tune ts
-        # self.model = LSTM(
-        #     input_size=53,  # PRIOR
-        #     input_len=156,  # PRIOR
-        #     hidden_size=37,
-        #     num_layers=4,
-        #     batch_first=True,
-        #     bidirectional=True,
-        #     fc_dropout=0.470422547781582,
-        # )
-
-        ######### best CV
-
-        self.num_epochs = 32
-        self.batch_size = 16
+        # setup experiment
+        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
+        # setup data
+        self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
         self.datasets = {
             "train": DataLoader(
                 self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
@@ -140,10 +103,29 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = 52
-        num_layers = 3
-        bidirectional = False
-        fc_dropout = 0.2626756675371412
+        hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
+        num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
+        bidirectional = self._trial.suggest_categorical("lstm.bidirectional", [True, False])
+        fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.8)
+        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+
+        # # best CV
+        # self.num_epochs = 32
+        # self.batch_size = 16
+        # self.datasets = {
+        #     "train": DataLoader(
+        #         self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
+        #     ),
+        #     "valid": DataLoader(
+        #         self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
+        #     ),
+        # }
+        # # setup model
+        # hidden_size = 52
+        # num_layers = 3
+        # bidirectional = False
+        # fc_dropout = 0.2626756675371412
+        # lr = 0.000403084751422323
 
         self.model = LSTM(
             input_size=53,  # PRIOR
@@ -156,8 +138,6 @@ class Experiment(IExperiment):
         )
 
         self.criterion = nn.CrossEntropyLoss()
-        # lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
-        lr = 0.000403084751422323
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,

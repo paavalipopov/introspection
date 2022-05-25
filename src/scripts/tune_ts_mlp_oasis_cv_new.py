@@ -88,7 +88,9 @@ class Experiment(IExperiment):
         self.trial = trial
         features, labels = load_OASIS()
 
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42 + trial)
+        # print("Features shape: ", features.shape)
+
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         skf.get_n_splits(features, labels)
 
         train_index, test_index = list(skf.split(features, labels))[self.k]
@@ -96,14 +98,29 @@ class Experiment(IExperiment):
         X_train, X_test = features[train_index], features[test_index]
         y_train, y_test = labels[train_index], labels[test_index]
 
+        # print("Raw train shape: ", X_train.shape)
+        # print("Test shape: ", X_test.shape)
+
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train, y_train, test_size=165, random_state=42 + trial, stratify=y_train
+        )
+
         X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
+        X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
         X_test = np.swapaxes(X_test, 1, 2)
+
+        # print("Train shape: ", X_train.shape)
+        # print("Val shape: ", X_val.shape)
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
             torch.tensor(y_train, dtype=torch.int64),
         )
         self._valid_ds = TensorDataset(
+            torch.tensor(X_val, dtype=torch.float32),
+            torch.tensor(y_val, dtype=torch.int64),
+        )
+        self._test_ds = TensorDataset(
             torch.tensor(X_test, dtype=torch.float32),
             torch.tensor(y_test, dtype=torch.int64),
         )
@@ -111,7 +128,7 @@ class Experiment(IExperiment):
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project="tune_mlp_oasis_cv_whole", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
+            project="mlp_oasis_cv_whole", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
         )
 
         super().on_experiment_start(exp)
@@ -126,6 +143,9 @@ class Experiment(IExperiment):
             ),
             "valid": DataLoader(
                 self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
+            ),
+            "test": DataLoader(
+                self._test_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
             ),
         }
         # setup model
@@ -255,14 +275,15 @@ class Experiment(IExperiment):
         return self._score
 
     def tune(self, n_trials: int):
-        for trial in range(n_trials):
-            for k in range(5):
+        # for k in range(5):
+        for k in range(1):
+            for trial in range(n_trials):
                 self.on_tune_start(trial, k)
-                self.study = optuna.create_study(direction="maximize")
-                self.study.optimize(self._objective, n_trials=1, n_jobs=1)
-                logfile = f"{self.logdir}/optuna.csv"
-                df = self.study.trials_dataframe()
-                df.to_csv(logfile, index=False)
+                # self.study = optuna.create_study(direction="maximize")
+                # self.study.optimize(self._objective, n_trials=1, n_jobs=1)
+                # logfile = f"{self.logdir}/optuna.csv"
+                # df = self.study.trials_dataframe()
+                # df.to_csv(logfile, index=False)
 
 
 if __name__ == "__main__":

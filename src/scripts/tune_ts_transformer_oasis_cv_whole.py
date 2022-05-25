@@ -92,48 +92,16 @@ class Experiment(IExperiment):
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project="transformer_oasis_cv_whole", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
+            project="tune_transformer_oasis_cv_whole",
+            name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}",
         )
 
         super().on_experiment_start(exp)
+
         # setup experiment
-        # self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
-        # # setup data
-        # self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
-        # self.datasets = {
-        #     "train": DataLoader(
-        #         self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
-        #     ),
-        #     "valid": DataLoader(
-        #         self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
-        #     ),
-        # }
-        # # setup model
-        # hidden_size = self._trial.suggest_int("transformer.hidden_size", 4, 128, log=True)
-        # num_heads = self._trial.suggest_int("transformer.num_heads", 1, 4)
-        # num_layers = self._trial.suggest_int("transformer.num_layers", 1, 4)
-        # fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.2, 0.8)
-        # # self.model = Transformer(
-        # #     input_size=53,  # PRIOR
-        # #     input_len=156,  # PRIOR
-        # #     hidden_size=hidden_size * num_heads,
-        # #     num_layers=num_layers,
-        # #     num_heads=num_heads,
-        # #     fc_dropout=fc_dropout,
-        # # )
-
-        # best tune
-        # self.model = Transformer(
-        #     input_size=53,  # PRIOR
-        #     input_len=156,  # PRIOR
-        #     hidden_size=51,
-        #     num_layers=3,
-        #     num_heads=3,
-        #     fc_dropout=0.3374627901172494,
-        # )
-
-        self.num_epochs = 32
-        self.batch_size = 10
+        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
+        # setup data
+        self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
         self.datasets = {
             "train": DataLoader(
                 self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
@@ -143,10 +111,28 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = 49
-        num_heads = 1
-        num_layers = 2
-        fc_dropout = 0.7161003999134297
+        hidden_size = self._trial.suggest_int("transformer.hidden_size", 4, 128, log=True)
+        num_heads = self._trial.suggest_int("transformer.num_heads", 1, 4)
+        num_layers = self._trial.suggest_int("transformer.num_layers", 1, 4)
+        fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.2, 0.8)
+        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+
+        # self.num_epochs = 32
+        # self.batch_size = 10
+        # self.datasets = {
+        #     "train": DataLoader(
+        #         self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
+        #     ),
+        #     "valid": DataLoader(
+        #         self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
+        #     ),
+        # }
+        # # setup model
+        # hidden_size = 49
+        # num_heads = 1
+        # num_layers = 2
+        # fc_dropout = 0.7161003999134297
+        # lr = 0.00011942784624083184
 
         self.model = Transformer(
             input_size=53,  # PRIOR
@@ -157,8 +143,6 @@ class Experiment(IExperiment):
             fc_dropout=fc_dropout,
         )
 
-        # lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
-        lr = 0.00011942784624083184
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(
             self.model.parameters(),
