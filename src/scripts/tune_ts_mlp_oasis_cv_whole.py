@@ -116,28 +116,10 @@ class Experiment(IExperiment):
 
         super().on_experiment_start(exp)
 
-        # setup experiment
-        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
-        # setup data
-        self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
-        self.datasets = {
-            "train": DataLoader(
-                self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
-            ),
-            "valid": DataLoader(
-                self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
-            ),
-        }
-        # setup model
-        hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
-        num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-        dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
-
-        # # best cv
-        # self.num_epochs = 32
+        # # setup experiment
+        # self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
         # # setup data
-        # self.batch_size = 6
+        # self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
         # self.datasets = {
         #     "train": DataLoader(
         #         self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
@@ -147,10 +129,28 @@ class Experiment(IExperiment):
         #     ),
         # }
         # # setup model
-        # hidden_size = 142
-        # num_layers = 2
-        # dropout = 0.15847198018446662
-        # lr = 0.0002222585782420201
+        # hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
+        # num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
+        # dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+        # lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+
+        # best cv
+        self.num_epochs = 32
+        # setup data
+        self.batch_size = 6
+        self.datasets = {
+            "train": DataLoader(
+                self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
+            ),
+            "valid": DataLoader(
+                self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
+            ),
+        }
+        # setup model
+        hidden_size = 142
+        num_layers = 2
+        dropout = 0.15847198018446662
+        lr = 0.0002222585782420201
 
         self.model = MLP(
             input_size=53,  # PRIOR
