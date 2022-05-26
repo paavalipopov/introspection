@@ -117,7 +117,7 @@ class Experiment(IExperiment):
         # fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.2, 0.8)
         # lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
 
-        self.num_epochs = 32
+        self.num_epochs = 64
         self.batch_size = 10
         self.datasets = {
             "train": DataLoader(
@@ -151,18 +151,18 @@ class Experiment(IExperiment):
         # setup callbacks
         self.callbacks = {
             "early-stop": EarlyStoppingCallback(
-                minimize=False,
-                patience=5,
+                minimize=True,
+                patience=32,
                 dataset_key="valid",
-                metric_key="score",
+                metric_key="loss",
                 min_delta=0.001,
             ),
             "checkpointer": TorchCheckpointerCallback(
                 exp_attr="model",
                 logdir=f"{self.logdir}/{self._trial.number:04d}",
                 dataset_key="valid",
-                metric_key="score",
-                minimize=False,
+                metric_key="loss",
+                minimize=True,
             ),
         }
 
