@@ -72,7 +72,7 @@ def load_FBIRN(
     labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv"),
 ):
     hf = h5py.File(dataset_path, "r")
-    data = hf.get("ABIDE1_dataset")
+    data = hf.get("FBIRN_dataset")
     data = np.array(data)
     num_subjects = data.shape[0]
     num_components = 100
@@ -85,9 +85,13 @@ def load_FBIRN(
     c_indices = c_indices.flatten()
     c_indices = c_indices - 1
     finalData = data[:, c_indices, :]
+    # 311 - sessions - data.shape[0]
+    # 53 - components - data.shape[1]
+    # 140 - time points - data.shape[2]
 
     df = pd.read_csv(labels_path, header=None)
     labels = df.values.flatten() - 1
+    # 311 - sessions - data.shape[0]
 
     return finalData, labels
 
@@ -171,6 +175,3 @@ def _find_indices_of_each_class(all_labels):
     SZ_index = (all_labels == 1).nonzero()
 
     return HC_index, SZ_index
-
-
-load_balanced_OASIS()
