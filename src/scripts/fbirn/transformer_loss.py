@@ -22,30 +22,37 @@ import wandb
 import json
 
 
-class LSTM(nn.Module):
+class Transformer(nn.Module):
     def __init__(
         self,
+        input_size: int,
         input_len: int,
         fc_dropout: float = 0.5,
         hidden_size: int = 128,
-        bidirectional: bool = False,
-        **kwargs,
+        num_layers: int = 1,
+        num_heads: int = 8,
     ):
-        super(LSTM, self).__init__()
-        self.hidden_size = hidden_size
-        self.bidirectional = bidirectional
-        self.lstm = nn.LSTM(hidden_size=hidden_size, bidirectional=bidirectional, **kwargs)
-        lstm_out = 2 * hidden_size * input_len if bidirectional else hidden_size * input_len
+        super(Transformer, self).__init__()
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size, nhead=num_heads, batch_first=True
+        )
+        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        layers = [
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            transformer_encoder,
+        ]
+        self.transformer = nn.Sequential(*layers)
         self.fc = nn.Sequential(
             nn.Flatten(),
-            nn.LayerNorm(lstm_out),
+            nn.LayerNorm(input_len * hidden_size),
             nn.Dropout(p=fc_dropout),
-            nn.Linear(lstm_out, 2),
+            nn.Linear(input_len * hidden_size, 2),
         )
 
     def forward(self, x):
-        lstm_output, _ = self.lstm(x)
-        fc_output = self.fc(lstm_output)
+        fc_output = self.transformer(x)
+        fc_output = self.fc(fc_output)
         return fc_output
 
 
@@ -107,7 +114,7 @@ class Experiment(IExperiment):
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project="fbirn_lstm_loss", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
+            project="fbirn_transf_loss", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
         )
 
         super().on_experiment_start(exp)
@@ -125,15 +132,15 @@ class Experiment(IExperiment):
         #     ),
         # }
         # # setup model
-        # hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
-        # num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
-        # bidirectional = self._trial.suggest_categorical("lstm.bidirectional", [True, False])
-        # fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.8)
+        # hidden_size = self._trial.suggest_int("transformer.hidden_size", 4, 128, log=True)
+        # num_heads = self._trial.suggest_int("transformer.num_heads", 1, 4)
+        # num_layers = self._trial.suggest_int("transformer.num_layers", 1, 4)
+        # fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.2, 0.8)
         # lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
 
-        # best CV
+        # best cv
         self.num_epochs = 64
-        self.batch_size = 9
+        self.batch_size = 8
         self.datasets = {
             "train": DataLoader(
                 self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
@@ -143,19 +150,18 @@ class Experiment(IExperiment):
             ),
         }
         # setup model
-        hidden_size = 68
-        num_layers = 3
-        bidirectional = True
-        fc_dropout = 0.6157232781724284
-        lr = 0.00002322240078137594
+        hidden_size = 80
+        num_heads = 1
+        num_layers = 2
+        fc_dropout = 0.4374500259545924
+        lr = 0.00018054194996419817
 
-        self.model = LSTM(
+        self.model = Transformer(
             input_size=53,  # PRIOR
             input_len=140,  # PRIOR
-            hidden_size=hidden_size,
+            hidden_size=hidden_size * num_heads,
             num_layers=num_layers,
-            batch_first=True,
-            bidirectional=bidirectional,
+            num_heads=num_heads,
             fc_dropout=fc_dropout,
         )
 
@@ -206,8 +212,8 @@ class Experiment(IExperiment):
                 "num_epochs": self.num_epochs,
                 "batch_size": self.batch_size,
                 "hidden_size": hidden_size,
+                "num_heads": num_heads,
                 "num_layers": num_layers,
-                "bidirectional": bidirectional,
                 "fc_dropout": fc_dropout,
                 "lr": lr,
             }
@@ -266,7 +272,9 @@ class Experiment(IExperiment):
             self._test_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
         )
 
-        f = open(f"{LOGS_ROOT}/{UTCNOW}-ts-lstm-oasis-cv-q{args.quantile}/0000/model.storage.json")
+        f = open(
+            f"{LOGS_ROOT}/{UTCNOW}-ts-transformer-oasis-q{args.quantile}/0000/model.storage.json"
+        )
         logpath = json.load(f)["storage"][0]["logpath"]
         checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
         self.model.load_state_dict(checkpoint)
@@ -349,5 +357,5 @@ if __name__ == "__main__":
     Experiment(
         quantile=args.quantile,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-lstm-oasis-cv-q{args.quantile}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-ts-transformer-oasis-q{args.quantile}/",
     ).tune(n_trials=args.num_trials)
