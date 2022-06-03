@@ -107,7 +107,7 @@ class Experiment(IExperiment):
     def on_experiment_start(self, exp: "IExperiment"):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project="fbirn_lstm_loss", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
+            project="fbirn_lstm_score", name=f"{UTCNOW}-k_{self.k}-trial_{self.trial}"
         )
 
         super().on_experiment_start(exp)
